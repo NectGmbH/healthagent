@@ -6,12 +6,14 @@ import (
     "crypto/x509"
     "encoding/json"
     "fmt"
+    "io"
     "io/ioutil"
     "net/http"
     "strings"
     "time"
 
     "github.com/NectGmbH/health"
+    "github.com/OneOfOne/xxhash"
     "github.com/sirupsen/logrus"
 )
 
@@ -46,10 +48,12 @@ type Agent struct {
     config          Configuration
     status          []health.HealthCheckStatus // Same index as monitor in config
     checks          []*health.HealthCheck
+    syncStopCh      chan struct{}
     lastRequest     time.Time
     keepAliveStopCh chan struct{}
     stopChans       []chan struct{}
     httpClient      *http.Client
+    lastMonitorHash uint64
 }
 
 // NewAgent creates a new agent with the passed configuration.
@@ -64,9 +68,9 @@ func NewAgent(config Configuration) (*Agent, error) {
 
     agent := &Agent{
         config:          config,
-        status:          make([]health.HealthCheckStatus, len(config.Monitors)),
-        checks:          make([]*health.HealthCheck, len(config.Monitors)),
-        stopChans:       make([]chan struct{}, len(config.Monitors)),
+        status:          make([]health.HealthCheckStatus, 0),
+        checks:          make([]*health.HealthCheck, 0),
+        stopChans:       make([]chan struct{}, 0),
         keepAliveStopCh: make(chan struct{}, 0),
         httpClient: &http.Client{
             Timeout: time.Second * 3,
@@ -80,43 +84,172 @@ func NewAgent(config Configuration) (*Agent, error) {
         lastRequest: time.Now(),
     }
 
-    for i, monitor := range config.Monitors {
+    err = agent.syncMonitors(true)
+    if err != nil {
+        return nil, fmt.Errorf("couldn't do initial sync of monitors, see: %v", err)
+    }
+
+    go agent.loopSyncMonitors()
+
+    return agent, nil
+}
+
+func (a *Agent) loopSyncMonitors() {
+    a.syncStopCh = make(chan struct{}, 0)
+
+    for {
+        select {
+        case <-a.syncStopCh:
+            logrus.Info("stopped sync monitors loop")
+            return
+
+        default:
+            err := a.syncMonitors(false)
+            if err != nil {
+                logrus.Panicf("couldn't sync monitors, aborting execution since state may be fucked, see: %v", err)
+            }
+
+            time.Sleep(30 * time.Second)
+        }
+    }
+}
+
+func (a *Agent) syncMonitors(init bool) error {
+    monitors, hash, err := a.retrieveMonitors()
+    if err != nil {
+        return fmt.Errorf("couldn't retrieve monitors from upstream, see: %v", err)
+    }
+
+    logrus.Debugf("received monitors %#v with hash %d", monitors, hash)
+
+    if hash != 0 && hash == a.lastMonitorHash {
+        logrus.Info("SYNC MONITORS - skipping, since upstream has same hash")
+        return nil
+    }
+
+    logrus.Info("start syncing monitors")
+
+    if !init {
+        logrus.Info("SYNC MONITORS - stopping health checking")
+        a.Stop()
+        logrus.Info("SYNC MONITORS - stopped health checking")
+    }
+
+    a.checks = make([]*health.HealthCheck, len(monitors))
+    a.stopChans = make([]chan struct{}, len(monitors))
+    a.status = make([]health.HealthCheckStatus, len(monitors))
+
+    logrus.Info("SYNC MONITORS - setting up monitors")
+    err = a.setupMonitors(monitors)
+    if err != nil {
+        return fmt.Errorf("couldn't setup monitors, see: %v", err)
+    }
+    logrus.Info("SYNC MONITORS - set up monitors")
+
+    if !init {
+        logrus.Info("SYNC MONITORS - restarting health checking")
+        a.Start()
+        logrus.Info("SYNC MONITORS - restarted health checking")
+    }
+
+    a.lastMonitorHash = hash
+
+    logrus.Info("finished syncing monitors")
+
+    return nil
+}
+
+func (a *Agent) setupMonitors(monitors StringSlice) error {
+    for i, monitor := range monitors {
         prot, endpoint, err := TryParseProtocolEndpoint(monitor)
         if err != nil {
-            return nil, fmt.Errorf("couldn't parse monitor `%s`, see: %v", monitor, err)
+            return fmt.Errorf("couldn't parse monitor `%s`, see: %v", monitor, err)
         }
 
         provider, err := health.GetHealthCheckProvider(prot)
         if err != nil {
-            return nil, fmt.Errorf("couldn't get health check provider for monitor `%s`, see: %v", monitor, err)
+            return fmt.Errorf("couldn't get health check provider for monitor `%s`, see: %v", monitor, err)
         }
 
         h := health.NewHealthCheck(
             endpoint.IP,
             int(endpoint.Port),
             provider,
-            time.Duration(config.Interval)*time.Second,
+            time.Duration(a.config.Interval)*time.Second,
             60*time.Second,
             1*time.Second)
 
-        agent.checks[i] = h
-        agent.stopChans[i] = make(chan struct{}, 0)
+        logrus.Infof("setup health check for %v:%d", endpoint.IP, endpoint.Port)
+
+        a.checks[i] = h
+        a.stopChans[i] = make(chan struct{}, 0)
     }
 
-    return agent, nil
+    return nil
+}
+
+func (a *Agent) logUpstreamFail(msg string, up string, details error, try int) {
+    logrus.WithFields(logrus.Fields{
+        "upstream": up,
+        "detail":   details,
+        "cur":      try,
+        "max":      len(a.config.Upstreams),
+    }).Warn(msg)
+}
+
+func (a *Agent) retrieveMonitors() (StringSlice, uint64, error) {
+    var err error
+
+    for try, upstream := range a.config.Upstreams {
+        var req *http.Request
+        req, err = http.NewRequest("GET", upstream, nil)
+        if err != nil {
+            err = fmt.Errorf("couldn't create GET request to upstream `%s`, see: %v", upstream, err)
+            a.logUpstreamFail("couldn't receive monitors from upstream", upstream, err, try)
+            continue
+        }
+
+        req.Header.Add("X-Agent-Name", a.config.Name)
+
+        var resp *http.Response
+        resp, err = a.httpClient.Do(req)
+        if err != nil {
+            err = fmt.Errorf("couldn't GET to upstream `%s`, see: %v", upstream, err)
+            a.logUpstreamFail("couldn't receive monitors from upstream", upstream, err, try)
+            continue
+        }
+
+        defer resp.Body.Close()
+        bodyBytes, _ := ioutil.ReadAll(resp.Body)
+        bodyString := string(bodyBytes)
+
+        if resp.StatusCode < 200 || resp.StatusCode > 299 {
+            err = fmt.Errorf("invalid status `%d` for GET to upstream `%s`, see: %s", resp.StatusCode, upstream, bodyString)
+            a.logUpstreamFail("couldn't receive monitors from upstream", upstream, err, try)
+            continue
+        }
+
+        var monitors []string
+        err = json.Unmarshal(bodyBytes, &monitors)
+        if err != nil {
+            err = fmt.Errorf("couldn't deserialize monitors from upstream `%s`, see: %s", upstream, err)
+            a.logUpstreamFail("couldn't receive monitors from upstream", upstream, err, try)
+            continue
+        }
+
+        h := xxhash.New64()
+        reader := strings.NewReader(bodyString)
+        io.Copy(h, reader)
+        hash := h.Sum64()
+
+        return monitors, hash, nil
+    }
+
+    return nil, 0, err
 }
 
 func (a *Agent) informUpstream(index int) error {
     var err error
-
-    logUpstreamFail := func(up string, details error, try int) {
-        logrus.WithFields(logrus.Fields{
-            "upstream": up,
-            "detail":   details,
-            "cur":      try,
-            "max":      len(a.config.Upstreams),
-        }).Warn("couldn't inform upstream")
-    }
 
     for try, upstream := range a.config.Upstreams {
         a.lastRequest = time.Now()
@@ -125,14 +258,14 @@ func (a *Agent) informUpstream(index int) error {
 
         if err != nil {
             err = fmt.Errorf("couldn't serialize current status, see: %v", err)
-            logUpstreamFail(upstream, err, try)
+            a.logUpstreamFail("couldn't inform upstream about new status", upstream, err, try)
             continue
         }
 
         req, err := http.NewRequest("POST", upstream, bytes.NewReader(buf))
         if err != nil {
-            err = fmt.Errorf("couldn't create request to upstream `%s`, see: %v", upstream, err)
-            logUpstreamFail(upstream, err, try)
+            err = fmt.Errorf("couldn't create POST request to upstream `%s`, see: %v", upstream, err)
+            a.logUpstreamFail("couldn't inform upstream about new status", upstream, err, try)
             continue
         }
 
@@ -141,7 +274,7 @@ func (a *Agent) informUpstream(index int) error {
         resp, err := a.httpClient.Do(req)
         if err != nil {
             err = fmt.Errorf("couldn't POST to upstream `%s`, see: %v", upstream, err)
-            logUpstreamFail(upstream, err, try)
+            a.logUpstreamFail("couldn't inform upstream about new status", upstream, err, try)
             continue
         }
 
@@ -152,7 +285,7 @@ func (a *Agent) informUpstream(index int) error {
             bodyString := string(bodyBytes)
 
             err = fmt.Errorf("invalid status `%d` for post to upstream `%s`, see: %s", resp.StatusCode, upstream, bodyString)
-            logUpstreamFail(upstream, err, try)
+            a.logUpstreamFail("couldn't inform upstream about new status", upstream, err, try)
             continue
         }
 

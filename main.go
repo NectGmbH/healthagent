@@ -22,7 +22,6 @@ func main() {
 
     hostname, _ := os.Hostname()
 
-    flag.Var(&config.Monitors, "monitor", "endpoint which should be monitored in the format tcp://127.0.0.1:80 or http://hostname.de:80. Multiple can be given, e.g.: -monitor tcp://127.0.0.1:80 -monitor https://192.168.0.1:443")
     flag.IntVar(&config.KeepAlive, "keep-alive", 30, "amount of seconds where no requests are made to the upstream till a 'forcefull' keep alive request happens")
     flag.IntVar(&config.Interval, "interval", 1, "interval of health monitors")
     flag.Var(&config.Upstreams, "upstream", "upstream endpoint which should be notified on health changes, e.g. https://schnitzel.de/. Multiple can be given (it'll try all till the first works), e.g.: -upstream https://192.168.1.1 -upstream https://192.168.1.2")
@@ -34,10 +33,6 @@ func main() {
 
     if config.KeepAlive <= 0 {
         logrus.Fatalf("keep-alive is set to `%d` expected it to be at least 1", config.KeepAlive)
-    }
-
-    if len(config.Monitors) == 0 {
-        logrus.Fatal("no monitors configured, pass them using -monitor tcp://127.0.0.1:80")
     }
 
     if len(config.Upstreams) == 0 {
