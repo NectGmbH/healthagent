@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: healthagent
+spec:
+  selector:
+    matchLabels:
+      name: healthagent 
+  serviceName: "healthagent"
+  replicas: {{ .Values.replicas }}
+  template:
+    metadata:
+      labels:
+        name: healthagent 
+    spec:
+      affinity:
+{{ toYaml .Values.affinity | trim | indent 8}}
+      containers:
+      - name: healthagent
+        image: {{ .Values.image }}
+        imagePullPolicy: Always
+        args:
+        {{- range .Values.upstreams }}
+        - '-upstream'
+        - '{{ . }}'
+        {{- end }}
+        volumeMounts:
+        - name: certs
+          mountPath: "/certs"
+          readOnly: true
+      volumes:
+      - name: certs
+        secret:
+          secretName: healthagent

@@ -1,0 +1,7 @@
+image: 'kavatech/healthagent:0.1.1'
+ca: '' #base64 encoded string
+crt: '' #base64 encoded string
+key: '' #base64 encoded string
+affinity: {}
+replicas: 3
+upstreams: []

@@ -12,8 +12,8 @@ docker-build:
 	GOOS=linux go build -ldflags "-X main.APPVERSION=$(VERSION)" 
 	docker build -t $(IMAGE) .
 
-docker-push: build-docker
-	docker push -t $(IMAGE)
+docker-push: docker-build
+	docker push $(IMAGE)
 
 certs-create-ca:
 	openssl genrsa -out $(CERTS_DIR)ca.key 4096
