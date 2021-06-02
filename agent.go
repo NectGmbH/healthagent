@@ -33,14 +33,15 @@ func (i *StringSlice) Set(value string) error {
 
 // Configuration represents the user specified configuration of the agent
 type Configuration struct {
-	Monitors  StringSlice
-	Upstreams StringSlice
-	Interval  int
-	KeepAlive int
-	Name      string
-	CA        []byte
-	Cert      []byte
-	Key       []byte
+	Monitors    StringSlice
+	Upstreams   StringSlice
+	Interval    int
+	KeepAlive   int
+	Name        string
+	CA          []byte
+	Cert        []byte
+	Key         []byte
+	JsonLogging bool
 }
 
 // Agent represents an health monitoring agent

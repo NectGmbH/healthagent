@@ -29,7 +29,13 @@ func main() {
 	flag.StringVar(&caPath, "ca", "", "path to the ca.crt")
 	flag.StringVar(&crtPath, "crt", "", "path to the client.crt")
 	flag.StringVar(&keyPath, "key", "", "path to the client.key")
+	flag.BoolVar(&config.JsonLogging, "json-logging", false, "Always use JSON logging")
 	flag.Parse()
+
+	if config.JsonLogging == true {
+		logrus.SetFormatter(&logrus.JSONFormatter{})
+	}
+	logrus.Infof("healthagent v%s", APPVERSION)
 
 	if config.KeepAlive <= 0 {
 		logrus.Fatalf("keep-alive is set to `%d` expected it to be at least 1", config.KeepAlive)
