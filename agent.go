@@ -41,7 +41,7 @@ type Configuration struct {
 	CA          []byte
 	Cert        []byte
 	Key         []byte
-	JsonLogging bool
+	JSONLogging bool
 }
 
 // Agent represents an health monitoring agent
@@ -103,14 +103,12 @@ func (a *Agent) loopSyncMonitors() {
 		case <-a.syncStopCh:
 			logrus.Info("stopped sync monitors loop")
 			return
+		case <-time.After(30 * time.Second):
 
-		default:
 			err := a.syncMonitors(false)
 			if err != nil {
 				logrus.Panicf("couldn't sync monitors, aborting execution since state may be fucked, see: %v", err)
 			}
-
-			time.Sleep(30 * time.Second)
 		}
 	}
 }
