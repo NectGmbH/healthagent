@@ -29,10 +29,10 @@ func main() {
 	flag.StringVar(&caPath, "ca", "", "path to the ca.crt")
 	flag.StringVar(&crtPath, "crt", "", "path to the client.crt")
 	flag.StringVar(&keyPath, "key", "", "path to the client.key")
-	flag.BoolVar(&config.JsonLogging, "json-logging", false, "Always use JSON logging")
+	flag.BoolVar(&config.JSONLogging, "json-logging", false, "Always use JSON logging")
 	flag.Parse()
 
-	if config.JsonLogging == true {
+	if config.JSONLogging == true {
 		logrus.SetFormatter(&logrus.JSONFormatter{})
 	}
 	logrus.Infof("healthagent v%s", APPVERSION)
