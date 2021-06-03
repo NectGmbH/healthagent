@@ -107,7 +107,7 @@ func (a *Agent) loopSyncMonitors() {
 		case <-time.After(time.Duration(a.config.SyncHealthdInterval) * time.Second):
 			err := a.syncMonitors(false)
 			if err != nil {
-				logrus.Panicf("couldn't sync monitors, aborting execution since state may be fucked, see: %v", err)
+				logrus.Errorf("couldn't sync monitors, see: %v", err)
 			}
 		}
 	}
