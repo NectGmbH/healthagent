@@ -14,7 +14,6 @@ var APPVERSION string
 
 func main() {
 	logrus.Infof("healthagent v%s", APPVERSION)
-
 	config := Configuration{}
 	var caPath string
 	var crtPath string
@@ -24,6 +23,7 @@ func main() {
 
 	flag.IntVar(&config.KeepAlive, "keep-alive", 30, "amount of seconds where no requests are made to the upstream till a 'forcefull' keep alive request happens")
 	flag.IntVar(&config.Interval, "interval", 1, "interval of health monitors")
+	flag.IntVar(&config.SyncHealthdInterval, "sync-interval", 30, "interval of syncing with healthd")
 	flag.Var(&config.Upstreams, "upstream", "upstream endpoint which should be notified on health changes, e.g. https://schnitzel.de/. Multiple can be given (it'll try all till the first works), e.g.: -upstream https://192.168.1.1 -upstream https://192.168.1.2")
 	flag.StringVar(&config.Name, "name", hostname, "name to use to identify the current agent, defaults to the hostname")
 	flag.StringVar(&caPath, "ca", "", "path to the ca.crt")

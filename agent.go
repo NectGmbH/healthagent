@@ -33,15 +33,16 @@ func (i *StringSlice) Set(value string) error {
 
 // Configuration represents the user specified configuration of the agent
 type Configuration struct {
-	Monitors    StringSlice
-	Upstreams   StringSlice
-	Interval    int
-	KeepAlive   int
-	Name        string
-	CA          []byte
-	Cert        []byte
-	Key         []byte
-	JSONLogging bool
+	Monitors            StringSlice
+	Upstreams           StringSlice
+	Interval            int
+	KeepAlive           int
+	Name                string
+	CA                  []byte
+	Cert                []byte
+	Key                 []byte
+	JSONLogging         bool
+	SyncHealthdInterval int
 }
 
 // Agent represents an health monitoring agent
@@ -103,8 +104,7 @@ func (a *Agent) loopSyncMonitors() {
 		case <-a.syncStopCh:
 			logrus.Info("stopped sync monitors loop")
 			return
-		case <-time.After(30 * time.Second):
-
+		case <-time.After(time.Duration(a.config.SyncHealthdInterval) * time.Second):
 			err := a.syncMonitors(false)
 			if err != nil {
 				logrus.Panicf("couldn't sync monitors, aborting execution since state may be fucked, see: %v", err)
@@ -329,8 +329,7 @@ func (a *Agent) Start() {
 			select {
 			case <-a.keepAliveStopCh:
 				return
-
-			default:
+			case <-time.After(1 * time.Second):
 				timeSinceLastReq := time.Since(a.lastRequest)
 
 				if timeSinceLastReq > time.Duration(a.config.KeepAlive)*time.Second {
@@ -346,8 +345,6 @@ func (a *Agent) Start() {
 						}).Error("couldn't inform upstream")
 					}
 				}
-
-				time.Sleep(1 * time.Second)
 			}
 		}
 	})()
